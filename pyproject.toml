@@ -1,0 +1,27 @@
+[project]
+name = "pyredis"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Shubham Lakhera", email = "shubham.lakhera@blitznow.in" }
+]
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+pyredis = "pyredis:main"
+
+[dependency-groups]
+dev = [
+    "mypy>=1.10",
+    "pytest>=8.0",
+]
+
+[tool.mypy]
+strict = true
+files = ["src"]
+
+[build-system]
+requires = ["uv_build>=0.11.25,<0.12.0"]
+build-backend = "uv_build"

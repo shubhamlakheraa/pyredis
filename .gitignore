@@ -1,0 +1,21 @@
+# Claude Code
+.claude/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+*.egg-info/
+dist/
+build/
+
+# mypy
+.mypy_cache/
+
+# pytest
+.pytest_cache/
+
+# env
+.env
+.python-version
