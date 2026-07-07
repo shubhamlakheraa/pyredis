@@ -1,13 +1,12 @@
 import logging
 import selectors
 import socket
-from typing import Callable, Optional
+from typing import Optional
 
 from pyredis.config import Config
+from pyredis.connection import ConnectionClosed, RedisConnection
 
 logger = logging.getLogger(__name__)
-
-Handler = Callable[[socket.socket], None]
 
 
 class RedisServer:
@@ -24,7 +23,8 @@ class RedisServer:
         self._server_socket.bind((self._config.host, self._config.port))
         self._server_socket.listen()
         self._server_socket.setblocking(False)
-        self._sel.register(self._server_socket, selectors.EVENT_READ, self._on_accept)
+        # data=None marks the listener; clients get a RedisConnection in data.
+        self._sel.register(self._server_socket, selectors.EVENT_READ, data=None)
 
         self._running = True
         logger.info("Listening on %s:%d", self._config.host, self._config.port)
@@ -32,44 +32,88 @@ class RedisServer:
         try:
             while self._running:
                 events = self._sel.select(timeout=1.0)
-                for key, _mask in events:
-                    handler: Handler = key.data
-                    sock: socket.socket = key.fileobj  # type: ignore[assignment]
-                    try:
-                        handler(sock)
-                    except Exception:
-                        logger.exception("handler crashed; dropping client")
-                        self._drop_client(sock)
+                for key, mask in events:
+                    if key.data is None:
+                        try:
+                            self._on_accept()
+                        except Exception:
+                            logger.exception("accept failed")
+                        continue
+
+                    conn: RedisConnection = key.data
+                    if conn.closed:
+                        # Stale event from before we dropped this conn
+                        # (kqueue/epoll can queue events across close).
+                        continue
+                    dropped = False
+                    # Flush queued output first — if the peer is closing,
+                    # we still want to deliver the echo before we drop.
+                    if mask & selectors.EVENT_WRITE:
+                        try:
+                            self._on_write(conn)
+                        except Exception:
+                            logger.exception("write handler crashed")
+                            self._drop(conn)
+                            dropped = True
+                    if not dropped and mask & selectors.EVENT_READ:
+                        try:
+                            self._on_read(conn)
+                        except ConnectionClosed:
+                            self._drop(conn)
+                            dropped = True
+                        except Exception:
+                            logger.exception("read handler crashed")
+                            self._drop(conn)
+                            dropped = True
         finally:
             self._cleanup()
 
-    def _on_accept(self, server_sock: socket.socket) -> None:
+    def _on_accept(self) -> None:
         assert self._sel is not None
-        client_sock, client_addr = server_sock.accept()
+        assert self._server_socket is not None
+        client_sock, client_addr = self._server_socket.accept()
         logger.info("Accepted connection from %s:%d", client_addr[0], client_addr[1])
         client_sock.setblocking(False)
-        self._sel.register(client_sock, selectors.EVENT_READ, self._on_read)
+        conn = RedisConnection(client_sock)
+        self._sel.register(client_sock, selectors.EVENT_READ, data=conn)
 
-    def _on_read(self, client_sock: socket.socket) -> None:
-        data = client_sock.recv(1024)
-        if not data:
-            self._drop_client(client_sock)
+    def _on_read(self, conn: RedisConnection) -> None:
+        # T04 echo path: read bytes from inbound, hand them back to outbound.
+        # T05 will replace this with parse-frames-then-dispatch-commands.
+        data = conn.read_and_extract()
+        conn.enqueue(data)
+        self._arm_write(conn)
+
+    def _on_write(self, conn: RedisConnection) -> None:
+        conn.flush()
+        if not conn.has_pending_output():
+            self._disarm_write(conn)
+
+    def _arm_write(self, conn: RedisConnection) -> None:
+        assert self._sel is not None
+        if conn.write_armed:
             return
-    # TODO T04: replace with outbound buffer + write-readiness arming.
-    # sendall is fine for the echo-only T03 but breaks under real load
-    # on a non-blocking socket when the kernel send buffer fills.
-        client_sock.sendall(data)
+        self._sel.modify(
+            conn.socket,
+            selectors.EVENT_READ | selectors.EVENT_WRITE,
+            data=conn,
+        )
+        conn.set_write_armed(True)
 
-    def _drop_client(self, sock: socket.socket) -> None:
+    def _disarm_write(self, conn: RedisConnection) -> None:
+        assert self._sel is not None
+        if not conn.write_armed:
+            return
+        self._sel.modify(conn.socket, selectors.EVENT_READ, data=conn)
+        conn.set_write_armed(False)
+
+    def _drop(self, conn: RedisConnection) -> None:
         assert self._sel is not None
         try:
-            self._sel.unregister(sock)
+            self._sel.unregister(conn.socket)
         except (KeyError, ValueError):
             pass
-        try:
-            sock.close()
-        except OSError:
-            pass
+        conn.close()
 
     def stop(self) -> None:
         self._running = False
