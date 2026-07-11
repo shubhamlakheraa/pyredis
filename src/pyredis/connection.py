@@ -37,22 +37,20 @@ class RedisConnection:
     def has_pending_output(self) -> bool:
         return len(self._outbound_buffer) > 0
 
-    def read_and_extract(self) -> bytes:
-        """
-        Read one chunk from the socket, append to the inbound buffer,
-        and return whatever bytes we can hand up.
-
-        T04 stopgap: no framing yet — drain everything currently in the
-        buffer. T05 replaces this with RESP frame extraction that leaves
-        partial frames in the buffer for the next read.
-        """
+    def recv_into_buffer(self) -> None:
+        """Read one chunk from the socket into the inbound buffer."""
         chunk = self._socket.recv(READ_CHUNK)
         if not chunk:
             raise ConnectionClosed
         self._inbound_buffer += chunk
-        extracted = bytes(self._inbound_buffer)
-        self._inbound_buffer.clear()
-        return extracted
+
+    @property
+    def inbound_buffer(self) -> bytearray:
+        return self._inbound_buffer
+
+    def consume(self, n: int) -> None:
+        """Remove the first *n* bytes from the inbound buffer."""
+        del self._inbound_buffer[:n]
 
     def enqueue(self, data: bytes) -> None:
         self._outbound_buffer += data

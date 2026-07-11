@@ -5,6 +5,9 @@ from typing import Optional
 
 from pyredis.config import Config
 from pyredis.connection import ConnectionClosed, RedisConnection
+from pyredis.encoder import encode_error, encode_simple_string
+from pyredis.errors import ProtocolError, RedisError
+from pyredis.resp import parse_command
 
 logger = logging.getLogger(__name__)
 
@@ -78,11 +81,28 @@ class RedisServer:
         self._sel.register(client_sock, selectors.EVENT_READ, data=conn)
 
     def _on_read(self, conn: RedisConnection) -> None:
-        # T04 echo path: read bytes from inbound, hand them back to outbound.
-        # T05 will replace this with parse-frames-then-dispatch-commands.
-        data = conn.read_and_extract()
-        conn.enqueue(data)
-        self._arm_write(conn)
+        conn.recv_into_buffer()
+        while True:
+            try:
+                args, n = parse_command(conn.inbound_buffer)
+            except ProtocolError as e:
+                conn.enqueue(encode_error(f"ERR {e}"))
+                self._arm_write(conn)
+                self._drop(conn)
+                return
+            if args is None:
+                break
+            conn.consume(n)
+            try:
+                response = self._dispatch(args)
+            except RedisError as e:
+                response = encode_error(str(e))
+            conn.enqueue(response)
+            self._arm_write(conn)
+
+    def _dispatch(self, args: list[bytes]) -> bytes:
+        # T07 will replace this with real command routing.
+        return encode_simple_string("OK")
 
     def _on_write(self, conn: RedisConnection) -> None:
         conn.flush()
