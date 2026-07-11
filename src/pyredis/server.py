@@ -3,9 +3,10 @@ import selectors
 import socket
 from typing import Optional
 
+from pyredis.commands import CommandEntry, create_command_table
 from pyredis.config import Config
 from pyredis.connection import ConnectionClosed, RedisConnection
-from pyredis.encoder import encode_error, encode_simple_string
+from pyredis.encoder import encode_error
 from pyredis.errors import ProtocolError, RedisError
 from pyredis.resp import parse_command
 
@@ -18,6 +19,7 @@ class RedisServer:
         self._server_socket: Optional[socket.socket] = None
         self._sel: Optional[selectors.BaseSelector] = None
         self._running: bool = False
+        self._command_table: dict[bytes, CommandEntry] = create_command_table()
 
     def start(self) -> None:
         self._sel = selectors.DefaultSelector()
@@ -101,8 +103,14 @@ class RedisServer:
             self._arm_write(conn)
 
     def _dispatch(self, args: list[bytes]) -> bytes:
-        # T07 will replace this with real command routing.
-        return encode_simple_string("OK")
+        cmd = args[0].upper()
+        entry = self._command_table.get(cmd)
+        if entry is None:
+            return encode_error(f"ERR unknown command '{cmd.decode()}'")
+        n = len(args)
+        if n < entry.arity_min or (entry.arity_max != -1 and n > entry.arity_max):
+            return encode_error(f"ERR wrong number of arguments for '{cmd.decode()}' command")
+        return entry.handler(args)
 
     def _on_write(self, conn: RedisConnection) -> None:
         conn.flush()
