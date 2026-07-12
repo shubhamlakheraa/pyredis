@@ -8,3 +8,7 @@ class CommandError(RedisError):
 
 class ProtocolError(RedisError):
     """Malformed RESP input from the client."""
+
+
+class WrongTypeError(RedisError):
+    """Type mismatch on a key — becomes -WRONGTYPE on the wire."""

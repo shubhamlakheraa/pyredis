@@ -1,8 +1,9 @@
 import pytest
 
 from pyredis.commands import create_command_table, CommandEntry
+from pyredis.store import KeyValueStore
 
-TABLE = create_command_table()
+TABLE = create_command_table(KeyValueStore())
 
 
 def dispatch(args: list[bytes]) -> bytes:
@@ -105,6 +106,6 @@ def test_command_table_is_extensible() -> None:
     def handle_hello(args: list[bytes]) -> bytes:
         return encode_simple_string("OK")
 
-    table = create_command_table()
-    table[b"HELLO"] = CommandEntry(handle_hello, arity_min=1, arity_max=1)
+    table = create_command_table(KeyValueStore())
+    table[b"HELLO"] = CommandEntry(handle_hello, 1, 1, frozenset({"fast"}), 0, 0)
     assert b"HELLO" in table
