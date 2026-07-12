@@ -9,6 +9,7 @@ from pyredis.connection import ConnectionClosed, RedisConnection
 from pyredis.encoder import encode_error
 from pyredis.errors import ProtocolError, RedisError
 from pyredis.resp import parse_command
+from pyredis.store import KeyValueStore
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +20,8 @@ class RedisServer:
         self._server_socket: Optional[socket.socket] = None
         self._sel: Optional[selectors.BaseSelector] = None
         self._running: bool = False
-        self._command_table: dict[bytes, CommandEntry] = create_command_table()
+        self._store = KeyValueStore()
+        self._command_table: dict[bytes, CommandEntry] = create_command_table(self._store)
 
     def start(self) -> None:
         self._sel = selectors.DefaultSelector()
