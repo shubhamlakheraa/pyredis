@@ -1,8 +1,18 @@
 import pytest
 
-from pyredis.commands.strings import make_del, make_exists, make_get, make_set, make_type
+from pyredis.commands.strings import (
+    make_decr,
+    make_decrby,
+    make_del,
+    make_exists,
+    make_get,
+    make_incr,
+    make_incrby,
+    make_set,
+    make_type,
+)
 from pyredis.commands.lists import make_lpush
-from pyredis.errors import WrongTypeError
+from pyredis.errors import CommandError, WrongTypeError
 from pyredis.store import KeyValueStore
 
 
@@ -124,3 +134,104 @@ def test_lpush_on_string_key_raises_wrongtype() -> None:
     make_set(store)([b"SET", b"foo", b"bar"])
     with pytest.raises(WrongTypeError):
         make_lpush(store)([b"LPUSH", b"foo", b"x"])
+
+
+# ---------------------------------------------------------------------------
+# INCR
+# ---------------------------------------------------------------------------
+
+
+def test_incr_missing_key_starts_at_1() -> None:
+    store = make_store()
+    assert make_incr(store)([b"INCR", b"k"]) == b":1\r\n"
+
+
+def test_incr_ten_times_returns_10() -> None:
+    store = make_store()
+    handle = make_incr(store)
+    for _ in range(10):
+        handle([b"INCR", b"k"])
+    assert handle([b"INCR", b"k"]) == b":11\r\n"
+
+
+def test_incr_on_non_integer_raises_error() -> None:
+    store = make_store()
+    make_set(store)([b"SET", b"k", b"abc"])
+    with pytest.raises(CommandError, match="ERR"):
+        make_incr(store)([b"INCR", b"k"])
+
+
+def test_incr_result_stored_as_string() -> None:
+    store = make_store()
+    make_incr(store)([b"INCR", b"k"])
+    assert make_get(store)([b"GET", b"k"]) == b"$1\r\n1\r\n"
+
+
+def test_incr_overflow_raises_error() -> None:
+    store = make_store()
+    make_set(store)([b"SET", b"k", b"9223372036854775807"])
+    with pytest.raises(CommandError, match="overflow"):
+        make_incr(store)([b"INCR", b"k"])
+
+
+def test_incr_on_wrong_type_raises_wrongtype() -> None:
+    store = make_store()
+    from pyredis.object import RedisObject
+    store.put(b"k", RedisObject(type="list", value=[]))
+    with pytest.raises(WrongTypeError):
+        make_incr(store)([b"INCR", b"k"])
+
+
+# ---------------------------------------------------------------------------
+# DECR
+# ---------------------------------------------------------------------------
+
+
+def test_decr_missing_key_starts_at_minus_1() -> None:
+    store = make_store()
+    assert make_decr(store)([b"DECR", b"k"]) == b":-1\r\n"
+
+
+def test_decr_underflow_raises_error() -> None:
+    store = make_store()
+    make_set(store)([b"SET", b"k", b"-9223372036854775808"])
+    with pytest.raises(CommandError, match="overflow"):
+        make_decr(store)([b"DECR", b"k"])
+
+
+# ---------------------------------------------------------------------------
+# INCRBY / DECRBY
+# ---------------------------------------------------------------------------
+
+
+def test_incrby_adds_delta() -> None:
+    store = make_store()
+    handle_incr = make_incr(store)
+    handle_incrby = make_incrby(store)
+    for _ in range(10):
+        handle_incr([b"INCR", b"k"])
+    assert handle_incrby([b"INCRBY", b"k", b"5"]) == b":15\r\n"
+
+
+def test_decrby_subtracts_delta() -> None:
+    store = make_store()
+    make_incrby(store)([b"INCRBY", b"k", b"15"])
+    assert make_decrby(store)([b"DECRBY", b"k", b"4"]) == b":11\r\n"
+
+
+def test_incrby_non_integer_delta_raises_error() -> None:
+    store = make_store()
+    with pytest.raises(CommandError, match="ERR"):
+        make_incrby(store)([b"INCRBY", b"k", b"notanumber"])
+
+
+def test_decrby_non_integer_delta_raises_error() -> None:
+    store = make_store()
+    with pytest.raises(CommandError, match="ERR"):
+        make_decrby(store)([b"DECRBY", b"k", b"notanumber"])
+
+
+def test_type_after_incr_is_string() -> None:
+    store = make_store()
+    make_incr(store)([b"INCR", b"k"])
+    assert make_type(store)([b"TYPE", b"k"]) == b"+string\r\n"
