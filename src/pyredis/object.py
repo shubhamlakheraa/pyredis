@@ -12,5 +12,4 @@ class RedisObject:
     type: RedisSupportedTypes
     value: object
     encoding: str = "raw"
-    expire_at: float | None = None
     last_access: float = field(default_factory=time.time)

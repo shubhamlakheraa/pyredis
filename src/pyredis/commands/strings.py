@@ -1,3 +1,5 @@
+import time
+
 from pyredis.encoder import encode_bulk, encode_integer, encode_simple_string
 from pyredis.object import RedisObject
 from pyredis.store import KeyValueStore
@@ -22,6 +24,30 @@ def make_set(store: KeyValueStore) -> HandlerFunc:
     def handle_set(args: list[bytes]) -> bytes:
         key, value = args[1], args[2]
         store.put(key, RedisObject(type="string", value=value))
+        store.remove_expiry(key)  # plain SET clears any existing TTL
+        i = 3
+        while i < len(args):
+            opt = args[i].upper()
+            if opt == b"EX":
+                try:
+                    seconds = int(args[i + 1])
+                except (ValueError, IndexError):
+                    raise CommandError("ERR syntax error")
+                if seconds <= 0:
+                    raise CommandError("ERR invalid expire time in 'set' command")
+                store.set_expiry(key, time.time() + seconds)
+                i += 2
+            elif opt == b"PX":
+                try:
+                    ms = int(args[i + 1])
+                except (ValueError, IndexError):
+                    raise CommandError("ERR syntax error")
+                if ms <= 0:
+                    raise CommandError("ERR invalid expire time in 'set' command")
+                store.set_expiry(key, time.time() + ms / 1000.0)
+                i += 2
+            else:
+                raise CommandError("ERR syntax error")
         return encode_simple_string("OK")
     return handle_set
 
