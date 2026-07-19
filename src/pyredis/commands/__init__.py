@@ -22,7 +22,7 @@ class CommandEntry:
 
 
 def create_command_table(store: KeyValueStore) -> dict[bytes, CommandEntry]:
-    from pyredis.commands import lists, strings
+    from pyredis.commands import expiry, lists, strings
 
     table: dict[bytes, CommandEntry] = {
         b"PING": CommandEntry(handle_ping, 1, 2, frozenset({"fast"}), 0, 0),
@@ -30,4 +30,5 @@ def create_command_table(store: KeyValueStore) -> dict[bytes, CommandEntry]:
     }
     strings.register(store, table)
     lists.register(store, table)
+    expiry.register(store, table)
     return table
