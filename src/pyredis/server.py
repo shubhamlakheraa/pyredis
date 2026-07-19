@@ -38,7 +38,8 @@ class RedisServer:
 
         try:
             while self._running:
-                events = self._sel.select(timeout=1.0)
+                events = self._sel.select(timeout=0.1)
+                self._store.active_expire_cycle()
                 for key, mask in events:
                     if key.data is None:
                         try:
