@@ -1,7 +1,12 @@
+import random
 import time
 
 from pyredis.errors import WrongTypeError
 from pyredis.object import RedisObject, RedisSupportedTypes
+
+_SAMPLE_SIZE = 20
+_DEAD_RATIO_THRESHOLD = 0.25
+_MAX_CYCLE_SECONDS = 0.025
 
 
 class KeyValueStore:
@@ -52,4 +57,25 @@ class KeyValueStore:
 
     def get_expiry(self, key: bytes) -> float | None:
         return self._expires.get(key)
+
+    def active_expire_cycle(self) -> int:
+        total_deleted = 0
+        start = time.time()
+        while self._expires:
+            keys = list(self._expires)
+            sample = random.sample(keys, min(_SAMPLE_SIZE, len(keys)))
+            now = time.time()
+            dead = 0
+            for key in sample:
+                deadline = self._expires.get(key)
+                if deadline is not None and now >= deadline:
+                    self._data.pop(key, None)
+                    del self._expires[key]
+                    dead += 1
+                    total_deleted += 1
+            if dead / len(sample) < _DEAD_RATIO_THRESHOLD:
+                break
+            if time.time() - start >= _MAX_CYCLE_SECONDS:
+                break
+        return total_deleted
     
